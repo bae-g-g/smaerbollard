@@ -1,30 +1,45 @@
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 import cv2
-from flask import Flask, Response
 
-app = Flask(__name__)
+app = FastAPI()
 
-# 웹캠 비디오 캡처
+# 카메라 및 설정 초기화
+def get_camera():
+    cap = cv2.VideoCapture(0)  # 0은 기본 웹캠
+    cap.set(cv2.CAP_PROP_FPS, 30)  # 30 FPS 설정
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # 버퍼 최소화
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  # 가로 해상도 설정
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)  # 세로 해상도 설정
+    return cap
+
+# 프레임 생성기
 def generate_frames():
-    cap = cv2.VideoCapture(0)  # 0은 기본 웹캠을 의미
+    cap = get_camera()
     while True:
-        success, frame = cap.read()  # 웹캠에서 프레임을 읽음
+        success, frame = cap.read()
         if not success:
             break
-        else:
-            # MJPEG 스트림을 위한 인코딩
-            ret, buffer = cv2.imencode('.jpg', frame)
-            frame = buffer.tobytes()
 
-            # 프레임을 클라이언트에 전달
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
+        # 해상도 줄이기 (필요시 사용)
+        # frame = cv2.resize(frame, (640, 480)) 
 
-# 비디오 스트리밍을 위한 라우트
-@app.route('/video')
-def video():
-    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+        # 프레임을 H.264 압축 (MJPEG보다 효율적)
+        _, buffer = cv2.imencode('.jpg', frame)
 
-# 서버 실행
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5958)  # 포트 5958에서 서버 실행
-#집 와이파이 http://192.168.123.102:5958/video
+        # 클라이언트로 전송
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n\r\n')
+
+    cap.release()
+
+# 스트리밍 엔드포인트
+@app.get("/video")
+async def video_stream():
+    return StreamingResponse(generate_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+# FastAPI 서버 실행
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=554, log_level="info")
+# uvicorn webcam:app --reload 터미널에 입력해서 실행
